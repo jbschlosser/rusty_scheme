@@ -51,8 +51,11 @@ pub enum Function {
 }
 
 // type signature for all native functions
+//pub type ValueOperation =
+//    fn(&[Value], Rc<RefCell<Environment>>) -> Result<Value, RuntimeError>;
+
 pub type ValueOperation =
-    fn(&[Value], Rc<RefCell<Environment>>) -> Result<Value, RuntimeError>;
+    Rc<Box<Fn(&[Value], Rc<RefCell<Environment>>) -> Result<Value, RuntimeError>>>;
 
 impl Value {
     fn from_nodes(nodes: &[Node]) -> Vec<Value> {
@@ -109,7 +112,7 @@ impl PartialEq for Function {
 impl Clone for Function {
     fn clone(&self) -> Function {
         match *self {
-            Function::Native(ref func) => Function::Native(*func),
+            Function::Native(ref func) => Function::Native(func.clone()),
             Function::Scheme(ref a, ref b, ref env) => Function::Scheme(a.clone(), b.clone(), env.clone())
         }
     }
@@ -146,39 +149,39 @@ impl Environment {
     fn new_root() -> Rc<RefCell<Environment>> {
         let mut env = Environment { parent: None, values: HashMap::new() };
         let predefined_functions = &[
-            ("define", Function::Native(native_define)),
-            ("define-syntax-rule", Function::Native(native_define_syntax_rule)),
-            ("begin", Function::Native(native_begin)),
-            ("let", Function::Native(native_let)),
-            ("set!", Function::Native(native_set)),
-            ("lambda", Function::Native(native_lambda)),
-            ("λ", Function::Native(native_lambda)),
-            ("if", Function::Native(native_if)),
-            ("+", Function::Native(native_plus)),
-            ("-", Function::Native(native_minus)),
-            ("*", Function::Native(native_multiply)),
-            ("/", Function::Native(native_divide)),
-            ("<", Function::Native(native_lessthan)),
-            (">", Function::Native(native_greaterthan)),
-            ("=", Function::Native(native_equal)),
-            ("and", Function::Native(native_and)),
-            ("or", Function::Native(native_or)),
-            ("null?", Function::Native(native_null)),
-            ("list", Function::Native(native_list)),
-            ("car", Function::Native(native_car)),
-            ("cdr", Function::Native(native_cdr)),
-            ("cons", Function::Native(native_cons)),
-            ("append", Function::Native(native_append)),
-            ("quote", Function::Native(native_quote)),
-            ("quasiquote", Function::Native(native_quasiquote)),
-            ("error", Function::Native(native_error)),
-            ("apply", Function::Native(native_apply)),
-            ("eval", Function::Native(native_eval)),
-            ("write", Function::Native(native_write)),
-            ("display", Function::Native(native_display)),
-            ("displayln", Function::Native(native_displayln)),
-            ("print", Function::Native(native_print)),
-            ("newline", Function::Native(native_newline)),
+            ("define", Function::Native(Rc::new(Box::new(native_define)))),
+            ("define-syntax-rule", Function::Native(Rc::new(Box::new(native_define_syntax_rule)))),
+            ("begin", Function::Native(Rc::new(Box::new(native_begin)))),
+            ("let", Function::Native(Rc::new(Box::new(native_let)))),
+            ("set!", Function::Native(Rc::new(Box::new(native_set)))),
+            ("lambda", Function::Native(Rc::new(Box::new(native_lambda)))),
+            ("λ", Function::Native(Rc::new(Box::new(native_lambda)))),
+            ("if", Function::Native(Rc::new(Box::new(native_if)))),
+            ("+", Function::Native(Rc::new(Box::new(native_plus)))),
+            ("-", Function::Native(Rc::new(Box::new(native_minus)))),
+            ("*", Function::Native(Rc::new(Box::new(native_multiply)))),
+            ("/", Function::Native(Rc::new(Box::new(native_divide)))),
+            ("<", Function::Native(Rc::new(Box::new(native_lessthan)))),
+            (">", Function::Native(Rc::new(Box::new(native_greaterthan)))),
+            ("=", Function::Native(Rc::new(Box::new(native_equal)))),
+            ("and", Function::Native(Rc::new(Box::new(native_and)))),
+            ("or", Function::Native(Rc::new(Box::new(native_or)))),
+            ("null?", Function::Native(Rc::new(Box::new(native_null)))),
+            ("list", Function::Native(Rc::new(Box::new(native_list)))),
+            ("car", Function::Native(Rc::new(Box::new(native_car)))),
+            ("cdr", Function::Native(Rc::new(Box::new(native_cdr)))),
+            ("cons", Function::Native(Rc::new(Box::new(native_cons)))),
+            ("append", Function::Native(Rc::new(Box::new(native_append)))),
+            ("quote", Function::Native(Rc::new(Box::new(native_quote)))),
+            ("quasiquote", Function::Native(Rc::new(Box::new(native_quasiquote)))),
+            ("error", Function::Native(Rc::new(Box::new(native_error)))),
+            ("apply", Function::Native(Rc::new(Box::new(native_apply)))),
+            ("eval", Function::Native(Rc::new(Box::new(native_eval)))),
+            ("write", Function::Native(Rc::new(Box::new(native_write)))),
+            ("display", Function::Native(Rc::new(Box::new(native_display)))),
+            ("displayln", Function::Native(Rc::new(Box::new(native_displayln)))),
+            ("print", Function::Native(Rc::new(Box::new(native_print)))),
+            ("newline", Function::Native(Rc::new(Box::new(native_newline)))),
             ];
         for item in predefined_functions.iter() {
             let (name, ref func) = *item;
@@ -196,7 +199,7 @@ impl Environment {
     // If key is not defined in the current env, set it
     // If key is already defined in the current env, return runtime error
     // (So if key is defined at a higher level, still define it at the current level)
-    fn define(&mut self, key: String, value: Value) -> Result<(), RuntimeError> {
+    pub fn define(&mut self, key: String, value: Value) -> Result<(), RuntimeError> {
         if self.values.contains_key(&key) {
             runtime_error!("Duplicate define: {:?}", key)
         } else {
@@ -310,7 +313,7 @@ fn evaluate_expression(values: &Vec<Value>, env: Rc<RefCell<Environment>>) -> Re
 
 fn apply_function(func: &Function, args: &[Value], env: Rc<RefCell<Environment>>) -> Result<Value, RuntimeError> {
     match func {
-        &Function::Native(native_fn) => {
+        &Function::Native(ref native_fn) => {
             native_fn(args, env)
         },
         &Function::Scheme(ref arg_names, ref body, ref func_env) => {

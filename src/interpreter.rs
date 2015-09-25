@@ -15,6 +15,9 @@ use std::path::Path;
 #[cfg(not(test))]
 use std::io::Read;
 
+use std::cell::RefCell;
+use std::rc::Rc;
+
 macro_rules! try_or_err_to_string {
     ($inp:expr) => (
         match $inp {
@@ -56,11 +59,27 @@ impl Interpreter {
         }
     }
 
-    pub fn define_custom(&mut self, name: &str, op: ast_walk_interpreter::ValueOperation) {
+    pub fn define_custom(&mut self, name: &str,
+        func: Box<Fn(&[ast_walk_interpreter::Value]) -> Result<ast_walk_interpreter::Value, ast_walk_interpreter::RuntimeError>>)
+    {
+        use ast_walk_interpreter::{Value, Environment, RuntimeError,
+            evaluate_value};
         match *self {
             Interpreter::AstWalk(ref mut i) => {
-                //let root = i.root.borrow_mut();
-                i.add_to_environment(String::from(name), op).unwrap(); // TODO: Don't unwrap
+                i.add_to_environment(
+                    String::from(name),
+                    Rc::new(
+                        Box::new(move |args: &[Value],
+                            env: Rc<RefCell<Environment>>| ->
+                            Result<Value, RuntimeError>
+                        {
+                            let mut evaluated_args: Vec<Value> = Vec::new();
+                            for arg in args.iter() {
+                                let v = try!(evaluate_value(arg, env.clone()));
+                                evaluated_args.push(v);
+                            };
+                            func(&evaluated_args)
+                        }))).unwrap(); // TODO: Don't unwrap
             }
             Interpreter::Cps(_) => () // Do nothing for the moment.
         }
