@@ -316,14 +316,14 @@ impl iter::IntoIterator for List {
 impl fmt::Display for List {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let strs: Vec<String> = self.clone().into_iter().map(|v| format!("{}", v)).collect();
-        write!(f, "({})", &strs.connect(" "))
+        write!(f, "({})", &strs.join(" "))
     }
 }
 
 impl fmt::Debug for List {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let strs: Vec<String> = self.clone().into_iter().map(|v| format!("{:?}", v)).collect();
-        write!(f, "({})", &strs.connect(" "))
+        write!(f, "({})", &strs.join(" "))
     }
 }
 

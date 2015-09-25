@@ -23,6 +23,12 @@ impl Interpreter {
         let values = Value::from_nodes(nodes);
         evaluate_values(&values, self.root.clone())
     }
+
+    pub fn add_to_environment(&mut self, name: String, op: ValueOperation) ->
+        Result<(), RuntimeError>
+    {
+        self.root.borrow_mut().define(name, Value::Procedure(Function::Native(op)))
+    }
 }
 
 #[derive(PartialEq, Clone)]
@@ -45,7 +51,8 @@ pub enum Function {
 }
 
 // type signature for all native functions
-type ValueOperation = fn(&[Value], Rc<RefCell<Environment>>) -> Result<Value, RuntimeError>;
+pub type ValueOperation =
+    fn(&[Value], Rc<RefCell<Environment>>) -> Result<Value, RuntimeError>;
 
 impl Value {
     fn from_nodes(nodes: &[Node]) -> Vec<Value> {
@@ -72,7 +79,7 @@ impl fmt::Display for Value {
             Value::String(ref val) => write!(f, "{}", val),
             Value::List(ref list)  => {
                 let strs: Vec<String> = list.iter().map(|v| format!("{}", v)).collect();
-                write!(f, "({})", &strs.connect(" "))
+                write!(f, "({})", &strs.join(" "))
             },
             Value::Procedure(_)   => write!(f, "#<procedure>"),
             Value::Macro(_,_)     => write!(f, "#<macro>"),
@@ -86,7 +93,7 @@ impl fmt::Debug for Value {
             Value::String(ref val) => write!(f, "\"{}\"", val),
             Value::List(ref list)  => {
                 let strs: Vec<String> = list.iter().map(|v| format!("{:?}", v)).collect();
-                write!(f, "({})", &strs.connect(" "))
+                write!(f, "({})", &strs.join(" "))
             },
             _                      => write!(f, "{}", self)
         }
@@ -109,7 +116,7 @@ impl Clone for Function {
 }
 
 pub struct RuntimeError {
-    message: String,
+    pub message: String,
 }
 
 impl fmt::Display for RuntimeError {
@@ -123,13 +130,14 @@ impl fmt::Debug for RuntimeError {
     }
 }
 
+#[macro_export]
 macro_rules! runtime_error {
     ($($arg:tt)*) => (
         return Err(RuntimeError { message: format!($($arg)*)})
     )
 }
 
-struct Environment {
+pub struct Environment {
     parent: Option<Rc<RefCell<Environment>>>,
     values: HashMap<String, Value>,
 }
@@ -224,7 +232,7 @@ impl Environment {
         }
     }
 
-    fn get_root(env_ref: Rc<RefCell<Environment>>) -> Rc<RefCell<Environment>> {
+    pub fn get_root(env_ref: Rc<RefCell<Environment>>) -> Rc<RefCell<Environment>> {
         let env = env_ref.borrow();
         match env.parent {
             Some(ref parent) => Environment::get_root(parent.clone()),
@@ -233,7 +241,7 @@ impl Environment {
     }
 }
 
-fn evaluate_values(values: &[Value], env: Rc<RefCell<Environment>>) -> Result<Value, RuntimeError> {
+pub fn evaluate_values(values: &[Value], env: Rc<RefCell<Environment>>) -> Result<Value, RuntimeError> {
     let mut res = null!();
     for v in values.iter() {
         res = try!(evaluate_value(v, env.clone()));
@@ -241,7 +249,7 @@ fn evaluate_values(values: &[Value], env: Rc<RefCell<Environment>>) -> Result<Va
     Ok(res)
 }
 
-fn evaluate_value(value: &Value, env: Rc<RefCell<Environment>>) -> Result<Value, RuntimeError> {
+pub fn evaluate_value(value: &Value, env: Rc<RefCell<Environment>>) -> Result<Value, RuntimeError> {
     match value {
         &Value::Symbol(ref v) => {
             match env.borrow().get(v) {

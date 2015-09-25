@@ -34,7 +34,7 @@ pub enum Interpreter {
 }
 
 impl Interpreter {
-    fn new(t: &str) -> Interpreter {
+    pub fn new(t: &str) -> Interpreter {
         match t.as_ref() {
             "cps" => Interpreter::Cps(cps_interpreter::new().unwrap()),
             "ast_walk" => Interpreter::AstWalk(ast_walk_interpreter::new()),
@@ -56,10 +56,24 @@ impl Interpreter {
         }
     }
 
+    pub fn define_custom(&mut self, name: &str, op: ast_walk_interpreter::ValueOperation) {
+        match *self {
+            Interpreter::AstWalk(ref mut i) => {
+                //let root = i.root.borrow_mut();
+                i.add_to_environment(String::from(name), op).unwrap(); // TODO: Don't unwrap
+            }
+            Interpreter::Cps(_) => () // Do nothing for the moment.
+        }
+    }
+
     #[cfg(not(test))]
     pub fn start_repl(&self) {
         println!("\nWelcome to the RustyScheme REPL!");
         repl::start("> ", (|s| self.execute(&s)))
+    }
+
+    pub fn run_str(&self, s: &str) -> Result<String, String> {
+        self.execute(s)
     }
 
     #[cfg(not(test))]
