@@ -2,6 +2,7 @@ use lexer;
 use parser;
 use repl;
 use parser::*;
+use std::any::Any;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt;
@@ -26,6 +27,19 @@ macro_rules! try_or_runtime_error {
         match $inp {
             Ok(v) => v,
             Err(e) => return Err(RuntimeError {message: e.to_string()})
+        }
+    )
+}
+
+#[macro_export]
+macro_rules! expect_1_arg {
+    ($args:ident, $t:path, $var:ident) => (
+        if ($args).len() != 1 {
+            runtime_error!("one argument expected");
+        }
+        let $var = match $args[0] {
+            $t(ref $var) => $var,
+            _ => runtime_error!("wrong argument type")
         }
     )
 }
@@ -108,6 +122,7 @@ pub enum Value {
     List(Vec<Value>),
     Procedure(Function),
     Macro(Vec<String>, Vec<Value>),
+    CustomType(String, String) // type tag, identifier
 }
 
 pub enum Function {
@@ -153,6 +168,7 @@ impl fmt::Display for Value {
             },
             Value::Procedure(_)   => write!(f, "#<procedure>"),
             Value::Macro(_,_)     => write!(f, "#<macro>"),
+            Value::CustomType(ref t,_)     => write!(f, "#<{}>", t)
         }
     }
 }
@@ -210,11 +226,13 @@ macro_rules! runtime_error {
 pub struct Environment {
     parent: Option<Rc<RefCell<Environment>>>,
     values: HashMap<String, Value>,
+    customs: HashMap<String, HashMap<String, Box<Any>>>
 }
 
 impl Environment {
     fn new_root() -> Rc<RefCell<Environment>> {
-        let mut env = Environment { parent: None, values: HashMap::new() };
+        let mut env = Environment { parent: None, values: HashMap::new(),
+            customs: HashMap::new() };
         let predefined_functions = &[
             ("define", Function::Native(Rc::new(Box::new(native_define)))),
             ("define-syntax-rule", Function::Native(Rc::new(Box::new(native_define_syntax_rule)))),
@@ -261,8 +279,32 @@ impl Environment {
         &self.values
     }
 
+    pub fn get_custom<T: Any>(&self, tag: &str, identifier: &str) -> Option<&T> {
+        match self.customs.get(tag) {
+            Some(h) => match h.get(identifier) {
+                Some(a) => match a.downcast_ref::<T>() {
+                    Some(v) => Some(v),
+                    None => None
+                },
+                None => None
+            },
+            None => None
+        }
+    }
+
+    pub fn set_custom(&mut self, tag: &str, identifier: &str, value: Box<Any>) {
+        if !self.customs.contains_key(tag) {
+            self.customs.insert(String::from(tag), HashMap::new());
+        }
+
+        self.customs.get_mut(tag)
+            .unwrap()
+            .insert(String::from(identifier), value);
+    }
+
     fn new_child(parent: Rc<RefCell<Environment>>) -> Rc<RefCell<Environment>> {
-        let env = Environment { parent: Some(parent), values: HashMap::new() };
+        let env = Environment { parent: Some(parent), values: HashMap::new(),
+            customs: HashMap::new() };
         Rc::new(RefCell::new(env))
     }
 
@@ -336,6 +378,7 @@ pub fn evaluate_value(value: &Value, env: Rc<RefCell<Environment>>) -> Result<Va
         },
         &Value::Procedure(ref v) => Ok(Value::Procedure(v.clone())),
         &Value::Macro(ref a, ref b) => Ok(Value::Macro(a.clone(), b.clone())),
+        &Value::CustomType(ref t, ref i) => Ok(Value::CustomType(t.clone(), i.clone()))
     }
 }
 
@@ -360,6 +403,7 @@ fn quote_value(value: &Value, quasi: bool, env: Rc<RefCell<Environment>>) -> Res
         },
         &Value::Procedure(ref v) => Ok(Value::Procedure(v.clone())),
         &Value::Macro(ref a, ref b) => Ok(Value::Macro(a.clone(), b.clone())),
+        &Value::CustomType(ref t, ref i) => Ok(Value::CustomType(t.clone(), i.clone()))
     }
 }
 
