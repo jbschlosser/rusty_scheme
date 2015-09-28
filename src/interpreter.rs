@@ -1,8 +1,10 @@
+extern crate uuid;
+
 use lexer;
 use parser;
 use repl;
 use parser::*;
-use std::any::Any;
+use std::any::{Any, TypeId};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt;
@@ -10,6 +12,7 @@ use std::fs::File;
 use std::io::Read;
 use std::path::Path;
 use std::rc::Rc;
+use self::uuid::Uuid;
 
 #[macro_export]
 macro_rules! try_or_err_to_string {
@@ -111,25 +114,16 @@ macro_rules! parse_arg {
 
 #[macro_export]
 macro_rules! parse_custom_arg {
-    ($env:ident, $args:ident[$index:expr] => $cust:ident) => (
+    ($env:ident, $args:ident[$index:expr]) => (
         {
             let iden = match $args[$index] {
-                Value::CustomType(ref t, ref v) => {
-                    if t == stringify!($cust) {
-                        v
-                    } else {
-                        let err_string = format!("wrong argument type; expected {}",
-                            stringify!($cust));
-                        return Err(RuntimeError {message: err_string});
-                    }
-                },
+                Value::CustomType(_, ref v) => v,
                 _ => {
-                    let err_string = format!("wrong argument type; expected {}",
-                        stringify!($cust));
+                    let err_string = format!("wrong argument type; expected custom type");
                     return Err(RuntimeError {message: err_string});
                 }
             };
-            match $env.get_custom(stringify!($cust), &iden) {
+            match $env.get_custom(&iden) {
                 Some(v) => v,
                 None => runtime_error!("invalid custom")
             }
@@ -215,7 +209,7 @@ pub enum Value {
     List(Vec<Value>),
     Procedure(Function),
     Macro(Vec<String>, Vec<Value>),
-    CustomType(String, String) // type tag, identifier
+    CustomType(TypeId, Uuid)
 }
 
 pub enum Function {
@@ -261,7 +255,7 @@ impl fmt::Display for Value {
             },
             Value::Procedure(_)   => write!(f, "#<procedure>"),
             Value::Macro(_,_)     => write!(f, "#<macro>"),
-            Value::CustomType(ref t,_)     => write!(f, "#<{}>", t)
+            Value::CustomType(ref t,_)     => write!(f, "#<{:?}>", t)
         }
     }
 }
@@ -319,7 +313,7 @@ macro_rules! runtime_error {
 pub struct Environment {
     parent: Option<Rc<RefCell<Environment>>>,
     values: HashMap<String, Value>,
-    customs: HashMap<String, HashMap<String, Box<Any>>>
+    customs: HashMap<TypeId, HashMap<Uuid, Box<Any>>>
 }
 
 impl Environment {
@@ -372,8 +366,9 @@ impl Environment {
         &self.values
     }
 
-    pub fn get_custom<T: Any>(&self, tag: &str, identifier: &str) -> Option<&T> {
-        match self.customs.get(tag) {
+    pub fn get_custom<T: Any>(&self, identifier: &Uuid) -> Option<&T> {
+        let tag = TypeId::of::<T>();
+        match self.customs.get(&tag) {
             Some(h) => match h.get(identifier) {
                 Some(a) => match a.downcast_ref::<T>() {
                     Some(v) => Some(v),
@@ -385,16 +380,31 @@ impl Environment {
         }
     }
 
-    pub fn set_custom(&mut self, tag: &str, identifier: &str, value: Box<Any>) -> Value {
-        if !self.customs.contains_key(tag) {
-            self.customs.insert(String::from(tag), HashMap::new());
+    pub fn set_custom<T: Any>(&mut self, identifier: &Uuid, value: Box<T>) -> Value {
+        let tag = TypeId::of::<T>();
+        if !self.customs.contains_key(&tag) {
+            self.customs.insert(tag, HashMap::new());
         }
 
-        self.customs.get_mut(tag)
+        self.customs.get_mut(&tag)
             .unwrap()
-            .insert(String::from(identifier), value);
+            .insert(identifier.clone(), value);
 
-        Value::CustomType(String::from(tag), String::from(identifier))
+        Value::CustomType(tag, identifier.clone())
+    }
+
+    pub fn new_custom<T: Any>(&mut self, value: Box<T>) -> Value {
+        let tag = TypeId::of::<T>();
+        if !self.customs.contains_key(&tag) {
+            self.customs.insert(tag, HashMap::new());
+        }
+
+        let uuid = Uuid::new_v4();
+        self.customs.get_mut(&tag)
+            .unwrap()
+            .insert(uuid.clone(), value);
+
+        Value::CustomType(tag, uuid)
     }
 
     fn new_child(parent: Rc<RefCell<Environment>>) -> Rc<RefCell<Environment>> {
