@@ -31,15 +31,108 @@ macro_rules! try_or_runtime_error {
     )
 }
 
-#[macro_export]
-macro_rules! expect_1_arg {
-    ($args:ident, $t:path, $var:ident) => (
-        if ($args).len() != 1 {
-            runtime_error!("one argument expected");
+/*#[macro_export]
+macro_rules! expect_args {
+    ($args:ident, $( $t:path => $v:ident ),+) => {{
+        let mut arg_count: usize = 0;
+        $(
+            arg_count += 1;
+            if $args.len() < arg_count {
+                let err_string = format!("not enough arguments: {}", $args.len());
+                return Err(RuntimeError {message: err_string});
+            }
+            $v = match $args[arg_count - 1] {
+                $t(ref v) => v.clone(),
+                _ => runtime_error!("wrong argument type")
+            };
+        )+
+        if $args.len() > arg_count {
+            let err_string = format!("too many arguments: {}", $args.len());
+            return Err(RuntimeError {message: err_string});
         }
-        let $var = match $args[0] {
-            $t(ref $var) => $var,
-            _ => runtime_error!("wrong argument type")
+    }}
+}*/
+
+#[macro_export]
+macro_rules! expect_args {
+    ($args:ident == $num:expr) => {{
+        if $args.len() != $num {
+            let err_string = format!("expected {} arguments; got {}", $num, $args.len());
+            return Err(RuntimeError {message: err_string});
+        }
+    }};
+
+    ($args:ident > $num:expr) => {{
+        if $args.len() <= $num {
+            let err_string = format!("expected more than {} arguments; got {}",
+                $num, $args.len());
+            return Err(RuntimeError {message: err_string});
+        }
+    }};
+
+    ($args:ident >= $num:expr) => {{
+        if $args.len() < $num {
+            let err_string = format!("expected at least {} arguments; got {}",
+                $num, $args.len());
+            return Err(RuntimeError {message: err_string});
+        }
+    }};
+
+    ($args:ident < $num:expr) => {{
+        if $args.len() >= $num {
+            let err_string = format!("expected less than {} arguments; got {}",
+                $num, $args.len());
+            return Err(RuntimeError {message: err_string});
+        }
+    }};
+
+    ($args:ident <= $num:expr) => {{
+        if $args.len() > $num {
+            let err_string = format!("expected at most {} arguments; got {}",
+                $num, $args.len());
+            return Err(RuntimeError {message: err_string});
+        }
+    }};
+}
+
+#[macro_export]
+macro_rules! parse_arg {
+    ($args:ident[$index:expr] => $t:path) => (
+        match $args[$index] {
+            $t(ref v) => v,
+            _ => {
+                let err_string = format!("wrong argument type; expected {}",
+                    stringify!($t));
+                return Err(RuntimeError {message: err_string});
+            }
+        }
+    )
+}
+
+#[macro_export]
+macro_rules! parse_custom_arg {
+    ($env:ident, $args:ident[$index:expr] => $cust:ident) => (
+        {
+            let iden = match $args[$index] {
+                Value::CustomType(ref t, ref v) => {
+                    if t == stringify!($cust) {
+                        v
+                    } else {
+                        let err_string = format!("wrong argument type; expected {}",
+                            stringify!($cust));
+                        return Err(RuntimeError {message: err_string});
+                    }
+                },
+                _ => {
+                    let err_string = format!("wrong argument type; expected {}",
+                        stringify!($cust));
+                    return Err(RuntimeError {message: err_string});
+                }
+            };
+            match $env.get_custom(stringify!($cust), &iden) {
+                Some(v) => v,
+                None => runtime_error!("invalid custom")
+            }
         }
     )
 }
@@ -292,7 +385,7 @@ impl Environment {
         }
     }
 
-    pub fn set_custom(&mut self, tag: &str, identifier: &str, value: Box<Any>) {
+    pub fn set_custom(&mut self, tag: &str, identifier: &str, value: Box<Any>) -> Value {
         if !self.customs.contains_key(tag) {
             self.customs.insert(String::from(tag), HashMap::new());
         }
@@ -300,6 +393,8 @@ impl Environment {
         self.customs.get_mut(tag)
             .unwrap()
             .insert(String::from(identifier), value);
+
+        Value::CustomType(String::from(tag), String::from(identifier))
     }
 
     fn new_child(parent: Rc<RefCell<Environment>>) -> Rc<RefCell<Environment>> {
