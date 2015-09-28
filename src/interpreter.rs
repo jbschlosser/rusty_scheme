@@ -4,7 +4,7 @@ use lexer;
 use parser;
 use repl;
 use parser::*;
-use std::any::{Any, TypeId};
+use std::any::Any;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt;
@@ -117,7 +117,7 @@ macro_rules! parse_custom_arg {
     ($env:ident, $args:ident[$index:expr]) => (
         {
             let iden = match $args[$index] {
-                Value::CustomType(_, ref v) => v,
+                Value::CustomType(ref u) => u,
                 _ => {
                     let err_string = format!("wrong argument type; expected custom type");
                     return Err(RuntimeError {message: err_string});
@@ -209,7 +209,7 @@ pub enum Value {
     List(Vec<Value>),
     Procedure(Function),
     Macro(Vec<String>, Vec<Value>),
-    CustomType(TypeId, Uuid)
+    CustomType(Uuid)
 }
 
 pub enum Function {
@@ -255,7 +255,7 @@ impl fmt::Display for Value {
             },
             Value::Procedure(_)   => write!(f, "#<procedure>"),
             Value::Macro(_,_)     => write!(f, "#<macro>"),
-            Value::CustomType(ref t,_)     => write!(f, "#<{:?}>", t)
+            Value::CustomType(ref u)     => write!(f, "#<custom:{}>", u)
         }
     }
 }
@@ -313,7 +313,7 @@ macro_rules! runtime_error {
 pub struct Environment {
     parent: Option<Rc<RefCell<Environment>>>,
     values: HashMap<String, Value>,
-    customs: HashMap<TypeId, HashMap<Uuid, Box<Any>>>
+    customs: HashMap<Uuid, Box<Any>>
 }
 
 impl Environment {
@@ -366,14 +366,15 @@ impl Environment {
         &self.values
     }
 
+    // TODO: Remove; for debugging only
+    pub fn customs_size(&self) -> usize {
+        self.customs.len()
+    }
+
     pub fn get_custom<T: Any>(&self, identifier: &Uuid) -> Option<&T> {
-        let tag = TypeId::of::<T>();
-        match self.customs.get(&tag) {
-            Some(h) => match h.get(identifier) {
-                Some(a) => match a.downcast_ref::<T>() {
-                    Some(v) => Some(v),
-                    None => None
-                },
+        match self.customs.get(identifier) {
+            Some(a) => match a.downcast_ref::<T>() {
+                Some(v) => Some(v),
                 None => None
             },
             None => None
@@ -381,30 +382,14 @@ impl Environment {
     }
 
     pub fn set_custom<T: Any>(&mut self, identifier: &Uuid, value: Box<T>) -> Value {
-        let tag = TypeId::of::<T>();
-        if !self.customs.contains_key(&tag) {
-            self.customs.insert(tag, HashMap::new());
-        }
+        self.customs.insert(identifier.clone(), value);
 
-        self.customs.get_mut(&tag)
-            .unwrap()
-            .insert(identifier.clone(), value);
-
-        Value::CustomType(tag, identifier.clone())
+        Value::CustomType(identifier.clone())
     }
 
     pub fn new_custom<T: Any>(&mut self, value: Box<T>) -> Value {
-        let tag = TypeId::of::<T>();
-        if !self.customs.contains_key(&tag) {
-            self.customs.insert(tag, HashMap::new());
-        }
-
-        let uuid = Uuid::new_v4();
-        self.customs.get_mut(&tag)
-            .unwrap()
-            .insert(uuid.clone(), value);
-
-        Value::CustomType(tag, uuid)
+        // TODO: Guard against collisions.
+        self.set_custom(&Uuid::new_v4(), value)
     }
 
     fn new_child(parent: Rc<RefCell<Environment>>) -> Rc<RefCell<Environment>> {
@@ -483,7 +468,7 @@ pub fn evaluate_value(value: &Value, env: Rc<RefCell<Environment>>) -> Result<Va
         },
         &Value::Procedure(ref v) => Ok(Value::Procedure(v.clone())),
         &Value::Macro(ref a, ref b) => Ok(Value::Macro(a.clone(), b.clone())),
-        &Value::CustomType(ref t, ref i) => Ok(Value::CustomType(t.clone(), i.clone()))
+        &Value::CustomType(ref u) => Ok(Value::CustomType(u.clone()))
     }
 }
 
@@ -508,7 +493,7 @@ fn quote_value(value: &Value, quasi: bool, env: Rc<RefCell<Environment>>) -> Res
         },
         &Value::Procedure(ref v) => Ok(Value::Procedure(v.clone())),
         &Value::Macro(ref a, ref b) => Ok(Value::Macro(a.clone(), b.clone())),
-        &Value::CustomType(ref t, ref i) => Ok(Value::CustomType(t.clone(), i.clone()))
+        &Value::CustomType(ref u) => Ok(Value::CustomType(u.clone()))
     }
 }
 
