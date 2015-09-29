@@ -1,3 +1,6 @@
+#[macro_use]
+extern crate mopa;
+
 mod lexer;
 mod parser;
 mod repl;
@@ -9,6 +12,7 @@ pub use interpreter::{
     Value,
     Environment,
     RuntimeError,
+    Custom,
     evaluate_value,
     evaluate_values
 };

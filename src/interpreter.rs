@@ -1,6 +1,5 @@
-extern crate uuid;
-
 use lexer;
+use mopa;
 use parser;
 use repl;
 use parser::*;
@@ -12,7 +11,6 @@ use std::fs::File;
 use std::io::Read;
 use std::path::Path;
 use std::rc::Rc;
-use self::uuid::Uuid;
 
 #[macro_export]
 macro_rules! try_or_err_to_string {
@@ -33,28 +31,6 @@ macro_rules! try_or_runtime_error {
         }
     )
 }
-
-/*#[macro_export]
-macro_rules! expect_args {
-    ($args:ident, $( $t:path => $v:ident ),+) => {{
-        let mut arg_count: usize = 0;
-        $(
-            arg_count += 1;
-            if $args.len() < arg_count {
-                let err_string = format!("not enough arguments: {}", $args.len());
-                return Err(RuntimeError {message: err_string});
-            }
-            $v = match $args[arg_count - 1] {
-                $t(ref v) => v.clone(),
-                _ => runtime_error!("wrong argument type")
-            };
-        )+
-        if $args.len() > arg_count {
-            let err_string = format!("too many arguments: {}", $args.len());
-            return Err(RuntimeError {message: err_string});
-        }
-    }}
-}*/
 
 #[macro_export]
 macro_rules! expect_args {
@@ -100,8 +76,8 @@ macro_rules! expect_args {
 
 #[macro_export]
 macro_rules! parse_arg {
-    ($args:ident[$index:expr] => $t:path) => (
-        match $args[$index] {
+    ($val:expr => $t:path) => (
+        match $val {
             $t(ref v) => v,
             _ => {
                 let err_string = format!("wrong argument type; expected {}",
@@ -114,19 +90,15 @@ macro_rules! parse_arg {
 
 #[macro_export]
 macro_rules! parse_custom_arg {
-    ($env:ident, $args:ident[$index:expr]) => (
-        {
-            let iden = match $args[$index] {
-                Value::CustomType(ref u) => u,
-                _ => {
-                    let err_string = format!("wrong argument type; expected custom type");
-                    return Err(RuntimeError {message: err_string});
+    ($val:expr => $t:ty) => (
+        match $val {
+            Value::CustomType(Custom {object: ref o}) => {
+                match o.downcast_ref::<$t>() {
+                    Some(v) => v,
+                    None => runtime_error!("failed to parse custom arg: wrong type")
                 }
-            };
-            match $env.get_custom(&iden) {
-                Some(v) => v,
-                None => runtime_error!("invalid custom")
-            }
+            },
+            _ => runtime_error!("failed to parse arg: not custom")
         }
     )
 }
@@ -200,7 +172,19 @@ impl Interpreter {
     }
 }
 
-#[derive(PartialEq, Clone)]
+pub trait AnyClone : mopa::Any {
+    fn any_clone(&self) -> Box<AnyClone>;
+}
+
+impl<T> AnyClone for T where T: Clone + 'static + Any {
+    fn any_clone(&self) -> Box<AnyClone> {
+        Box::new(self.clone())
+    }
+}
+
+mopafy!(AnyClone);
+
+#[derive(Clone)]
 pub enum Value {
     Symbol(String),
     Integer(i64),
@@ -209,7 +193,17 @@ pub enum Value {
     List(Vec<Value>),
     Procedure(Function),
     Macro(Vec<String>, Vec<Value>),
-    CustomType(Uuid)
+    CustomType(Custom)
+}
+
+pub struct Custom {
+    pub object: Box<AnyClone>
+}
+
+impl Clone for Custom {
+    fn clone(&self) -> Self {
+        Custom {object: self.object.any_clone()}
+    }
 }
 
 pub enum Function {
@@ -217,14 +211,14 @@ pub enum Function {
     Scheme(Vec<String>, Vec<Value>, Rc<RefCell<Environment>>),
 }
 
-// type signature for all native functions
-//pub type ValueOperation =
-//    fn(&[Value], Rc<RefCell<Environment>>) -> Result<Value, RuntimeError>;
-
 pub type ValueOperation =
     Rc<Box<Fn(&[Value], Rc<RefCell<Environment>>) -> Result<Value, RuntimeError>>>;
 
 impl Value {
+    pub fn new_custom<T: AnyClone>(t: T) -> Value {
+        Value::CustomType(Custom {object: t.any_clone()})
+    }
+
     fn from_nodes(nodes: &[Node]) -> Vec<Value> {
         nodes.iter().map(Value::from_node).collect()
     }
@@ -255,7 +249,7 @@ impl fmt::Display for Value {
             },
             Value::Procedure(_)   => write!(f, "#<procedure>"),
             Value::Macro(_,_)     => write!(f, "#<macro>"),
-            Value::CustomType(ref u)     => write!(f, "#<custom:{}>", u)
+            Value::CustomType(_)     => write!(f, "#<custom>")
         }
     }
 }
@@ -312,14 +306,12 @@ macro_rules! runtime_error {
 
 pub struct Environment {
     parent: Option<Rc<RefCell<Environment>>>,
-    values: HashMap<String, Value>,
-    customs: HashMap<Uuid, Box<Any>>
+    values: HashMap<String, Value>
 }
 
 impl Environment {
     fn new_root() -> Rc<RefCell<Environment>> {
-        let mut env = Environment { parent: None, values: HashMap::new(),
-            customs: HashMap::new() };
+        let mut env = Environment { parent: None, values: HashMap::new() };
         let predefined_functions = &[
             ("define", Function::Native(Rc::new(Box::new(native_define)))),
             ("define-syntax-rule", Function::Native(Rc::new(Box::new(native_define_syntax_rule)))),
@@ -366,35 +358,8 @@ impl Environment {
         &self.values
     }
 
-    // TODO: Remove; for debugging only
-    pub fn customs_size(&self) -> usize {
-        self.customs.len()
-    }
-
-    pub fn get_custom<T: Any>(&self, identifier: &Uuid) -> Option<&T> {
-        match self.customs.get(identifier) {
-            Some(a) => match a.downcast_ref::<T>() {
-                Some(v) => Some(v),
-                None => None
-            },
-            None => None
-        }
-    }
-
-    pub fn set_custom<T: Any>(&mut self, identifier: &Uuid, value: Box<T>) -> Value {
-        self.customs.insert(identifier.clone(), value);
-
-        Value::CustomType(identifier.clone())
-    }
-
-    pub fn new_custom<T: Any>(&mut self, value: Box<T>) -> Value {
-        // TODO: Guard against collisions.
-        self.set_custom(&Uuid::new_v4(), value)
-    }
-
     fn new_child(parent: Rc<RefCell<Environment>>) -> Rc<RefCell<Environment>> {
-        let env = Environment { parent: Some(parent), values: HashMap::new(),
-            customs: HashMap::new() };
+        let env = Environment { parent: Some(parent), values: HashMap::new() };
         Rc::new(RefCell::new(env))
     }
 
@@ -468,7 +433,7 @@ pub fn evaluate_value(value: &Value, env: Rc<RefCell<Environment>>) -> Result<Va
         },
         &Value::Procedure(ref v) => Ok(Value::Procedure(v.clone())),
         &Value::Macro(ref a, ref b) => Ok(Value::Macro(a.clone(), b.clone())),
-        &Value::CustomType(ref u) => Ok(Value::CustomType(u.clone()))
+        &Value::CustomType(ref c) => Ok(Value::CustomType(c.clone()))
     }
 }
 
@@ -480,7 +445,14 @@ fn quote_value(value: &Value, quasi: bool, env: Rc<RefCell<Environment>>) -> Res
         &Value::String(ref v) => Ok(Value::String(v.clone())),
         &Value::List(ref vec) => {
             // check if we are unquoting inside a quasiquote
-            if quasi && vec.len() > 0 && vec[0] == Value::Symbol("unquote".to_string()) {
+            let check = quasi && vec.len() > 0 && match vec[0] {
+                Value::Symbol(ref s) => {
+                    s == "unquote"
+                },
+                _ => false
+            };
+            //if quasi && vec.len() > 0 && vec[0] == Value::Symbol("unquote".to_string()) {
+            if check {
                 if vec.len() != 2 {
                     runtime_error!("Must supply exactly one argument to unquote: {:?}", vec);
                 }
@@ -493,7 +465,7 @@ fn quote_value(value: &Value, quasi: bool, env: Rc<RefCell<Environment>>) -> Res
         },
         &Value::Procedure(ref v) => Ok(Value::Procedure(v.clone())),
         &Value::Macro(ref a, ref b) => Ok(Value::Macro(a.clone(), b.clone())),
-        &Value::CustomType(ref u) => Ok(Value::CustomType(u.clone()))
+        &Value::CustomType(ref c) => Ok(Value::CustomType(c.clone()))
     }
 }
 
