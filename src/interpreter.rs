@@ -139,7 +139,11 @@ impl Interpreter {
         self.execute(&contents)
     }
 
-    pub fn define(&mut self, name: &str,
+    pub fn define(&mut self, name: &str, value: Value) -> Result<(), RuntimeError> {
+        self.root.borrow_mut().define(String::from(name), value)
+    }
+
+    pub fn define_fn(&mut self, name: &str,
         func: Box<Fn(Rc<RefCell<Environment>>, &[Value]) ->
         Result<Value, RuntimeError>>) -> Result<(), RuntimeError>
     {
