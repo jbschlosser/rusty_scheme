@@ -92,7 +92,7 @@ macro_rules! parse_arg {
 macro_rules! parse_custom_arg {
     ($val:expr => $t:ty) => (
         match $val {
-            Value::CustomType(Custom {object: ref o}) => {
+            Value::CustomType(Custom {object: ref o, tag: _}) => {
                 match o.downcast_ref::<$t>() {
                     Some(v) => v,
                     None => runtime_error!("failed to parse custom arg: wrong type")
@@ -200,13 +200,52 @@ pub enum Value {
     CustomType(Custom)
 }
 
+impl PartialEq for Value {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (&Value::Symbol(ref v1), &Value::Symbol(ref v2)) => v1 == v2,
+            (&Value::Integer(v1), &Value::Integer(v2)) => v1 == v2,
+            (&Value::Boolean(v1), &Value::Boolean(v2)) => v1 == v2,
+            (&Value::String(ref v1), &Value::String(ref v2)) => v1 == v2,
+            (&Value::List(ref v1), &Value::List(ref v2)) => v1 == v2,
+            (&Value::Procedure(_), &Value::Procedure(_)) => unimplemented!(),
+            (&Value::Macro(ref s1, ref v1), &Value::Macro(ref s2, ref v2)) =>
+                s1 == s2 && v1 == v2,
+            (&Value::CustomType(_), &Value::CustomType(_)) => unimplemented!(),
+            _ => false
+        }
+    }
+}
+
+impl Eq for Value {}
+
+use std::hash::{Hash, Hasher};
+impl Hash for Value {
+    fn hash<H>(&self, state: &mut H) where H: Hasher {
+        match self {
+            &Value::Symbol(ref v) => v.hash(state),
+            &Value::Integer(ref v) => v.hash(state),
+            &Value::Boolean(ref v) => v.hash(state),
+            &Value::String(ref v) => v.hash(state),
+            &Value::List(ref v) => v.hash(state),
+            &Value::Procedure(_) => unimplemented!(),
+            &Value::Macro(ref s, ref v) => {
+                s.hash(state);
+                v.hash(state);
+            },
+            &Value::CustomType(_) => unimplemented!(),
+        }
+    }
+}
+
 pub struct Custom {
-    pub object: Box<AnyClone>
+    pub object: Box<AnyClone>,
+    pub tag: String
 }
 
 impl Clone for Custom {
     fn clone(&self) -> Self {
-        Custom {object: self.object.any_clone()}
+        Custom {object: self.object.any_clone(), tag: self.tag.clone()}
     }
 }
 
@@ -219,8 +258,8 @@ pub type ValueOperation =
     Rc<Box<Fn(&[Value], Rc<RefCell<Environment>>) -> Result<Value, RuntimeError>>>;
 
 impl Value {
-    pub fn new_custom<T: AnyClone>(t: T) -> Value {
-        Value::CustomType(Custom {object: t.any_clone()})
+    pub fn new_custom<T: AnyClone>(t: T, tag: &str) -> Value {
+        Value::CustomType(Custom {object: t.any_clone(), tag: String::from(tag)})
     }
 
     fn from_nodes(nodes: &[Node]) -> Vec<Value> {
@@ -253,7 +292,7 @@ impl fmt::Display for Value {
             },
             Value::Procedure(_)   => write!(f, "#<procedure>"),
             Value::Macro(_,_)     => write!(f, "#<macro>"),
-            Value::CustomType(_)     => write!(f, "#<custom>")
+            Value::CustomType(Custom{object: _, tag: ref t}) => write!(f, "#<{}>", t)
         }
     }
 }
